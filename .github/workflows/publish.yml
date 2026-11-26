@@ -11,8 +11,15 @@ on: # yamllint disable-line rule:truthy
   # when this file changes on main.
   schedule:
     - cron: "7,22,37,52 * * * *"
+  # A change to what is published ships at once; anything else waits for
+  # the schedule.
   push:
     branches: [main]
+    paths:
+      - components.toml
+      - release/**
+      - site/**
+      - tools/pkgs.py
   workflow_dispatch:
     inputs:
       action:
