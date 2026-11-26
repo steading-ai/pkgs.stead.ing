@@ -1,0 +1,43 @@
+---
+name: check
+
+on: # yamllint disable-line rule:truthy
+  pull_request:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: Unit tests
+        run: python3 -m unittest discover -s tools -v
+      - name: Shellcheck
+        run: shellcheck bin/generate-signing-key test/e2e.sh
+
+  # The whole publishing job against a local stand-in for the bucket, with
+  # a throwaway key, and dnf installing from it.
+  e2e:
+    runs-on: ubuntu-24.04
+    container: docker.io/library/fedora:45
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - name: End to end
+        run: bash test/e2e.sh

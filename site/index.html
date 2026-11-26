@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Steading packages</title>
+<meta name="description" content="Signed Fedora packages for every Steading component.">
+<style>
+  :root { --bg: #fbfaf7; --fg: #1f2421; --muted: #5d655f; --code: #efece4; --rule: #dcd7cb; --link: #2f6b4f; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161a17; --fg: #e6e9e4; --muted: #9aa39c; --code: #222823; --rule: #333a34; --link: #8cc7a6; }
+  }
+  body { background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, sans-serif; margin: 0; padding: 0 16px; }
+  main { max-width: 44rem; margin: 3rem auto; }
+  h1 { font-size: 1.6rem; margin-bottom: 0.25rem; }
+  h2 { font-size: 1.1rem; margin-top: 2.25rem; }
+  p.lede { color: var(--muted); margin-top: 0; }
+  pre, code { font: 0.9rem/1.5 ui-monospace, monospace; }
+  pre { background: var(--code); padding: 0.75rem 1rem; overflow-x: auto; border-radius: 4px; }
+  code { background: var(--code); padding: 0.1rem 0.3rem; border-radius: 3px; }
+  pre code { background: none; padding: 0; }
+  a { color: var(--link); }
+  .fingerprint { word-spacing: 0.3em; overflow-wrap: anywhere; }
+  footer { border-top: 1px solid var(--rule); margin-top: 3rem; padding-top: 1rem; color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+<h1>Steading packages</h1>
+<p class="lede">Signed Fedora packages for every Steading component.</p>
+
+<h2>Install</h2>
+<pre><code>sudo dnf install https://pkgs.stead.ing/steading-release.noarch.rpm
+sudo dnf install skift</code></pre>
+<p><code>steading-release</code> adds the repository and its signing key. Or add the repository alone:</p>
+<pre><code>sudo dnf config-manager addrepo --from-repofile=https://pkgs.stead.ing/steading.repo</code></pre>
+
+<h2>Channels</h2>
+<p><strong>stable</strong> is enabled by default. It moves to the newest <strong>edge</strong> build that has been in edge for at least 48 hours and hasn't been yanked. To follow edge, which gets every release as soon as it is published:</p>
+<pre><code>sudo dnf config-manager setopt steading.enabled=0 steading-edge.enabled=1</code></pre>
+<p>Each component's promotion history is at <code>/channels/&lt;component&gt;.json</code>, for example <a href="/channels/skift.json">skift.json</a>.</p>
+
+<h2>Signing key</h2>
+<p>Every package, and every channel's metadata, is signed with this key. dnf checks both.</p>
+<p><code class="fingerprint">@FINGERPRINT@</code></p>
+<p><a href="/RPM-GPG-KEY-steading">RPM-GPG-KEY-steading</a></p>
+
+<footer>Published by <a href="https://github.com/steading-ai/pkgs.stead.ing">steading-ai/pkgs.stead.ing</a>.</footer>
+</main>
+</body>
+</html>

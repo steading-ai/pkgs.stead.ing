@@ -1,0 +1,5 @@
+# The tools the checks run, for running them locally.
+[tools]
+"aqua:koalaman/shellcheck" = "0.11.0"
+shfmt = "3.12.0"
+actionlint = "1.7.12"

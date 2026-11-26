@@ -1,0 +1,117 @@
+---
+# Publishes every component's new releases to edge, promotes soaked builds
+# to stable, and moves the images' tags to match. A maintainer runs it by
+# hand to promote a build now or to yank one. tools/pkgs.py is what it
+# does; docs/signing-key.md is where the key comes from.
+name: publish
+
+on: # yamllint disable-line rule:truthy
+  schedule:
+    - cron: "7,22,37,52 * * * *"
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "sync publishes and promotes as the schedule does; promote moves a build to stable now; yank removes one from both channels"
+        type: choice
+        options: [sync, promote, yank]
+        default: sync
+      component:
+        description: "Component, for promote and yank"
+        type: string
+        default: skift
+      version:
+        description: "Version, X.Y.Z, for promote and yank"
+        type: string
+      reason:
+        description: "Why the build is yanked"
+        type: string
+
+permissions: {}
+
+# Every run reads and rewrites the same histories, so one at a time, and
+# none cancelled part way.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  # The only job that may reference the publish environment, which holds
+  # the signing key and the bucket's token and deploys only from main.
+  publish:
+    runs-on: ubuntu-24.04
+    container: docker.io/library/fedora:45
+    timeout-minutes: 30
+    environment: publish
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      R2_BUCKET: pkgs-stead-ing
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      SIGNING_KEY_FINGERPRINT: ${{ vars.SIGNING_KEY_FINGERPRINT }}
+    steps:
+      - name: Install the tools
+        run: >-
+          dnf -y -q --setopt=install_weak_deps=False install
+          git rpm-build rpm-sign createrepo_c gnupg2 python3 gh awscli2
+
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      # Into a keyring under RUNNER_TEMP, which the runner discards with
+      # the job; the step after the last removes it first anyway.
+      - name: Import the signing key
+        env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: |
+          GNUPGHOME="$RUNNER_TEMP/gnupg"
+          echo "GNUPGHOME=$GNUPGHOME" >> "$GITHUB_ENV"
+          install -d -m 700 "$GNUPGHOME"
+          printf '%s\n' "$SIGNING_KEY" | GNUPGHOME="$GNUPGHOME" gpg --batch --quiet --import
+
+      - name: Publish
+        env:
+          ACTION: ${{ inputs.action || 'sync' }}
+          COMPONENT: ${{ inputs.component }}
+          VERSION: ${{ inputs.version }}
+          REASON: ${{ inputs.reason }}
+        run: |
+          case "$ACTION" in
+            sync) python3 tools/pkgs.py sync ;;
+            promote) python3 tools/pkgs.py promote "$COMPONENT" "$VERSION" ;;
+            yank) python3 tools/pkgs.py yank "$COMPONENT" "$VERSION" --reason "$REASON" ;;
+            *) echo "::error::unknown action $ACTION"; exit 1 ;;
+          esac
+
+      - name: Forget the signing key
+        if: always()
+        run: |
+          gpgconf --kill all || true
+          rm -rf "$RUNNER_TEMP/gnupg"
+
+  # Moves each image's stable, latest and X.Y tags to what stable now
+  # holds, read from the published histories. No key, no bucket token.
+  images:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write # move tags on images this repository has write access to
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Sign in to ghcr.io
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: printf '%s' "$GH_TOKEN" | skopeo login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+
+      - name: Move the image tags
+        run: python3 tools/pkgs.py images

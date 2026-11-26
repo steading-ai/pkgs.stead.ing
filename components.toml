@@ -1,0 +1,11 @@
+# Every component pkgs.stead.ing publishes. A component's rpms are taken
+# from its GitHub releases, and only after each one's attestation verifies
+# against `workflow` in `repository` at the release's tag.
+#
+# `image`, when set, is the container image whose `stable`, `latest` and
+# `X.Y` tags promotion moves.
+
+[skift]
+repository = "steading-ai/skift"
+workflow = ".github/workflows/release.yml"
+image = "ghcr.io/steading-ai/skift"
