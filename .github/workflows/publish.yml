@@ -9,7 +9,7 @@ on: # yamllint disable-line rule:truthy
   # How a component's release reaches edge with no one acting. GitHub
   # starts scheduled runs late under load.
   schedule:
-    - cron: "7,22,37,52 * * * *"
+    - cron: "2,17,32,47 * * * *"
   # A change to what is published ships at once; anything else waits for
   # the schedule.
   push:
