@@ -112,21 +112,22 @@ short="${fingerprint:24:16}"
 
 # --- The offline copy and the revocation certificate, to 1Password. ---
 
-op_create() { # <title> <file name>, contents on stdin
+# op reads "-" only from a pipe; a file goes by path.
+op_create() { # <title> <file name> <path, or - for a pipe on stdin>
 	if [[ -n "$VAULT" ]]; then
-		op document create - --title "$1" --file-name "$2" --vault "$VAULT" --format json
+		op document create "$3" --title "$1" --file-name "$2" --vault "$VAULT" --format json
 	else
-		op document create - --title "$1" --file-name "$2" --format json
+		op document create "$3" --title "$1" --file-name "$2" --format json
 	fi
 }
 item_id() { sed -n 's/.*"uuid": *"\([^"]*\)".*/\1/p'; }
 
 key_item="$(gpg --batch --armor --export-secret-keys "$fingerprint" |
-	op_create "Steading package signing key $short" "steading-signing-key-$fingerprint.asc" | item_id)"
+	op_create "Steading package signing key $short" "steading-signing-key-$fingerprint.asc" - | item_id)"
 [[ -n "$key_item" ]] || die "1Password did not return an item for the key"
 
 revocation_item="$(op_create "Steading package signing key $short revocation certificate" \
-	"steading-signing-key-$fingerprint.rev" <"$revocation" | item_id)"
+	"steading-signing-key-$fingerprint.rev" "$revocation" | item_id)"
 [[ -n "$revocation_item" ]] || die "1Password did not return an item for the revocation certificate"
 
 # Read the offline copy back into a scratch keyring on the same RAM disk:
