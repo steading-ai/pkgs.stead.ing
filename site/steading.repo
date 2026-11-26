@@ -1,0 +1,17 @@
+[steading]
+name=Steading
+baseurl=https://pkgs.stead.ing/fedora/stable/$basearch/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://pkgs.stead.ing/RPM-GPG-KEY-steading
+metadata_expire=6h
+
+[steading-edge]
+name=Steading (edge)
+baseurl=https://pkgs.stead.ing/fedora/edge/$basearch/
+enabled=0
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://pkgs.stead.ing/RPM-GPG-KEY-steading
+metadata_expire=1h

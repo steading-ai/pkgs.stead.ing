@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# Generates the Steading package signing key on a RAM disk, sends the
+# secret key to 1Password and to this repository's publishing environment,
+# and prints only the public key and its fingerprint. Run it once, on macOS,
+# from a checkout of this repository. docs/signing-key.md says why each step
+# is the way it is.
+#
+# Usage: bin/generate-signing-key [1Password vault]
+#
+# Written for the bash 3.2 macOS ships.
+set -euo pipefail
+
+REPO="steading-ai/pkgs.stead.ing"
+ENVIRONMENT="publish"
+SECRET="SIGNING_KEY"
+FINGERPRINT_VARIABLE="SIGNING_KEY_FINGERPRINT"
+USER_ID="Steading Packages (https://pkgs.stead.ing)"
+PUBLIC_KEY_PATH="site/RPM-GPG-KEY-steading"
+VAULT="${1:-}"
+
+die() {
+	echo "generate-signing-key: $*" >&2
+	exit 1
+}
+
+# Nothing this process holds may reach a crash dump.
+ulimit -c 0
+umask 077
+
+[[ "$(uname -s)" == "Darwin" ]] || die "written for macOS; see docs/signing-key.md"
+[[ -d site && -f bin/generate-signing-key ]] || die "run it from the root of a $REPO checkout"
+[[ ! -e "$PUBLIC_KEY_PATH" ]] || die "$PUBLIC_KEY_PATH already exists: the key has been generated"
+
+for tool in gpg gpgconf op gh hdiutil diskutil; do
+	command -v "$tool" >/dev/null || die "$tool is not on PATH"
+done
+
+# --- Preflight: everything that can refuse does so before a key exists. ---
+
+gh auth status >/dev/null 2>&1 || die "gh is not signed in (gh auth login)"
+gh api "repos/$REPO/environments/$ENVIRONMENT" >/dev/null 2>&1 ||
+	die "$REPO has no '$ENVIRONMENT' environment"
+if gh secret list --repo "$REPO" --env "$ENVIRONMENT" | awk '{print $1}' | grep -qx "$SECRET"; then
+	die "$SECRET is already set in $ENVIRONMENT; this would replace a key that may be in use"
+fi
+
+op whoami >/dev/null 2>&1 || die "op is not signed in (op signin)"
+if [[ -n "$VAULT" ]]; then
+	op vault get "$VAULT" >/dev/null || die "no 1Password vault named '$VAULT'"
+fi
+
+# --- A RAM disk for the keyring, so the key never reaches the SSD. ---
+
+device="$(hdiutil attach -nomount ram://65536 | awk '{print $1; exit}')" # 32 MiB
+[[ "$device" == /dev/disk* ]] || die "hdiutil did not attach a RAM disk"
+mountpoint="$(mktemp -d)"
+
+cleanup() {
+	if [[ -n "${GNUPGHOME:-}" ]]; then
+		gpgconf --homedir "$GNUPGHOME" --kill all 2>/dev/null || true
+	fi
+	diskutil unmount force "$mountpoint" >/dev/null 2>&1 || true
+	hdiutil detach "$device" -force >/dev/null 2>&1 || true
+	rmdir "$mountpoint" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+# erasevolume formats through DiskArbitration, so no sudo, and mounts the
+# empty volume in /Volumes; it is remounted where only this script looks,
+# with nobrowse to keep it out of Finder and Spotlight, before it holds
+# anything.
+diskutil erasevolume HFS+ steading-key "$device" >/dev/null
+diskutil unmount "$device" >/dev/null
+diskutil mount -mountOptions nobrowse -mountPoint "$mountpoint" "$device" >/dev/null
+touch "$mountpoint/.metadata_never_index"
+
+mounted_from="$(df -P "$mountpoint" | awk 'NR == 2 {print $1}')"
+[[ "$mounted_from" == "$device" ]] ||
+	die "$mountpoint is on $mounted_from, not the RAM disk $device"
+
+export GNUPGHOME="$mountpoint/gnupg"
+mkdir -m 700 "$GNUPGHOME"
+
+# --- The key. ---
+
+# One RSA-4096 primary key that signs, with no expiry and no passphrase.
+gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
+	--quick-generate-key "$USER_ID" rsa4096 sign never
+
+fingerprint="$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" {print $10; exit}')"
+[[ "$fingerprint" =~ ^[0-9A-F]{40}$ ]] || die "could not read the new key's fingerprint"
+
+# The key is exactly what was asked for: one key, RSA (algorithm 1) at 4096
+# bits, no expiry, able to sign, and no subkeys.
+key_line="$(gpg --batch --with-colons --list-secret-keys "$fingerprint" | awk -F: '$1 == "sec"')"
+IFS=: read -r _ _ bits algorithm _ _ expires _ _ _ _ capabilities _ <<<"$key_line"
+[[ "$bits" == 4096 && "$algorithm" == 1 && -z "$expires" && "$capabilities" == *s* ]] ||
+	die "the generated key is not an RSA-4096 signing key without expiry"
+if gpg --batch --with-colons --list-secret-keys "$fingerprint" | grep -q '^ssb:'; then
+	die "the generated key has a subkey"
+fi
+
+# It signs, and the signature verifies.
+echo "steading" | gpg --batch --quiet --local-user "$fingerprint" --detach-sign --armor |
+	gpg --batch --quiet --verify - <(echo "steading") 2>/dev/null ||
+	die "a test signature did not verify"
+
+revocation="$GNUPGHOME/openpgp-revocs.d/$fingerprint.rev"
+[[ -f "$revocation" ]] || die "gpg wrote no revocation certificate"
+
+short="${fingerprint:24:16}"
+
+# --- The offline copy and the revocation certificate, to 1Password. ---
+
+op_create() { # <title> <file name>, contents on stdin
+	if [[ -n "$VAULT" ]]; then
+		op document create - --title "$1" --file-name "$2" --vault "$VAULT" --format json
+	else
+		op document create - --title "$1" --file-name "$2" --format json
+	fi
+}
+item_id() { sed -n 's/.*"uuid": *"\([^"]*\)".*/\1/p'; }
+
+key_item="$(gpg --batch --armor --export-secret-keys "$fingerprint" |
+	op_create "Steading package signing key $short" "steading-signing-key-$fingerprint.asc" | item_id)"
+[[ -n "$key_item" ]] || die "1Password did not return an item for the key"
+
+revocation_item="$(op_create "Steading package signing key $short revocation certificate" \
+	"steading-signing-key-$fingerprint.rev" <"$revocation" | item_id)"
+[[ -n "$revocation_item" ]] || die "1Password did not return an item for the revocation certificate"
+
+# Read the offline copy back into a scratch keyring on the same RAM disk:
+# it must hold this key's secret, not just its public half.
+scratch="$mountpoint/check"
+mkdir -m 700 "$scratch"
+op document get "$key_item" | gpg --homedir "$scratch" --batch --quiet --import 2>/dev/null
+gpg --homedir "$scratch" --batch --with-colons --list-secret-keys "$fingerprint" |
+	grep -q "^fpr:::::::::$fingerprint:" || die "the copy in 1Password is not this key's secret key"
+gpgconf --homedir "$scratch" --kill all 2>/dev/null || true
+
+# --- The secret, to the publishing environment. ---
+
+gpg --batch --armor --export-secret-keys "$fingerprint" |
+	gh secret set "$SECRET" --repo "$REPO" --env "$ENVIRONMENT"
+gh variable set "$FINGERPRINT_VARIABLE" --repo "$REPO" --env "$ENVIRONMENT" --body "$fingerprint"
+
+# --- Only public material leaves the RAM disk. ---
+
+gpg --batch --armor --export "$fingerprint" >"$PUBLIC_KEY_PATH"
+chmod 644 "$PUBLIC_KEY_PATH"
+
+cat <<EOF
+
+Fingerprint: $fingerprint
+
+The secret key is in 1Password ("Steading package signing key $short") with
+its revocation certificate, and in $REPO's $ENVIRONMENT environment as
+$SECRET. The RAM disk is detached on exit.
+
+Commit $PUBLIC_KEY_PATH:
+
+EOF
+cat "$PUBLIC_KEY_PATH"
