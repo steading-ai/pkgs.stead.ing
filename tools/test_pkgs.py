@@ -114,6 +114,19 @@ class HistoryShape(unittest.TestCase):
                 pkgs.version_key(bad)
 
 
+class ContentTypes(unittest.TestCase):
+    def test_the_key_is_served_as_a_key(self):
+        self.assertEqual(pkgs.content_type(Path("RPM-GPG-KEY-steading")), "application/pgp-keys")
+
+    def test_a_changed_content_type_changes_the_tag(self):
+        # put_if_changed compares tags, so a file whose type changes is put again.
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            key, plain = Path(d) / "RPM-GPG-KEY-steading", Path(d) / "key.bin"
+            key.write_text("same"), plain.write_text("same")
+            self.assertNotEqual(pkgs.Store.tag_of(key), pkgs.Store.tag_of(plain))
+
+
 class RepoFiles(unittest.TestCase):
     def test_the_site_and_the_rpm_configure_the_same_repositories(self):
         root = Path(pkgs.ROOT)

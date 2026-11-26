@@ -55,6 +55,12 @@ CONTENT_TYPES = {
 }
 
 
+def content_type(path: Path) -> str:
+    if path.name.startswith("RPM-GPG-KEY-"):
+        return "application/pgp-keys"
+    return CONTENT_TYPES.get(path.suffix, "application/octet-stream")
+
+
 class Refused(Exception):
     """A command that must not go ahead, with the reason."""
 
@@ -194,7 +200,7 @@ class Store:
         raise NotImplementedError
 
     def tag(self, key: str) -> str | None:
-        """An opaque version of the object, or None when it is absent."""
+        """The object's contents and content type, or None when it is absent."""
         raise NotImplementedError
 
     def get_json(self, key: str) -> dict | None:
@@ -210,7 +216,9 @@ class Store:
 
     @staticmethod
     def tag_of(path: Path) -> str:
-        return hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
+        """What tag() would say of this file once it is put."""
+        md5 = hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
+        return f"{md5} {content_type(path)}"
 
 
 class LocalStore(Store):
@@ -268,7 +276,8 @@ class R2Store(Store):
             if "Not Found" in result.stderr or "404" in result.stderr:
                 return None
             raise RuntimeError(f"head-object {key}: {result.stderr.strip()}")
-        return json.loads(result.stdout)["ETag"].strip('"')
+        head = json.loads(result.stdout)
+        return f"{head['ETag'].strip(chr(34))} {head.get('ContentType', '')}"
 
     def get(self, key: str, dest: Path) -> bool:
         if self.tag(key) is None:
@@ -278,10 +287,9 @@ class R2Store(Store):
         return True
 
     def put(self, key: str, src: Path, cache_control: str) -> None:
-        content_type = CONTENT_TYPES.get(src.suffix, "application/octet-stream")
         self._s3api(
             "put-object", "--bucket", self.bucket, "--key", key, "--body", str(src),
-            "--content-type", content_type, "--cache-control", cache_control,
+            "--content-type", content_type(src), "--cache-control", cache_control,
         )
         log(f"  put {key}")
 
