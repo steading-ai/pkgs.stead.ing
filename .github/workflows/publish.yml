@@ -7,8 +7,7 @@ name: publish
 
 on: # yamllint disable-line rule:truthy
   # How a component's release reaches edge with no one acting. GitHub
-  # starts scheduled runs late under load, and registers a schedule only
-  # when this file changes on main.
+  # starts scheduled runs late under load.
   schedule:
     - cron: "7,22,37,52 * * * *"
   # A change to what is published ships at once; anything else waits for
