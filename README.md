@@ -7,6 +7,8 @@ Fedora is the first distribution it serves. Each component's release builds and 
 - `edge` gets every release as soon as it is published.
 - `stable` moves to the newest `edge` build that has been in `edge` for at least 48 hours and hasn't been yanked.
 
+A component's release starts the `publish` workflow itself once it has published, so a release reaches `edge` within minutes. It does so with a token from the `steading-pkgs-dispatch` GitHub App, which is installed on this repository alone with Actions write. `publish` also runs on a 15-minute schedule: that is what promotes a build to `stable`, and it picks up a release whose own start failed.
+
 ## Install
 
 ```bash
