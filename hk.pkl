@@ -1,0 +1,40 @@
+amends "package://github.com/jdx/hk/releases/download/v2.13.0/hk@2.13.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.13.0/hk@2.13.0#/Builtins.pkl"
+
+// One step per check tool, so hk runs them concurrently and runs each only
+// when a file it covers is selected. CI runs `hk check --all`; `hk fix`
+// applies the fixes the tools offer.
+local linters = new Mapping<String, Step> {
+    ["jactionlint"] = Builtins.jactionlint
+    ["shellcheck"] = Builtins.shellcheck
+    ["shfmt"] = Builtins.shfmt
+    ["ruff"] = Builtins.ruff
+    ["ruff-format"] = Builtins.ruff_format
+}
+
+hooks {
+    // The gate before a commit: the linters, then the unit specs. The end to
+    // end test needs a Fedora container, so it runs in CI alone.
+    ["pre-commit"] {
+        fix = false
+        stash = "git"
+        steps {
+            ...linters
+            ["unit"] {
+                glob = List("tools/**/*.py", "components.toml", "site/*.repo", "release/*.repo")
+                check = new CommandSpec {
+                    command = "python3 -m unittest discover -s tools"
+                    effect = "read"
+                }
+                depends = linters.keys.toList()
+            }
+        }
+    }
+    ["check"] {
+        steps = linters
+    }
+    ["fix"] {
+        fix = true
+        steps = linters
+    }
+}

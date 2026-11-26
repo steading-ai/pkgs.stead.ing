@@ -86,11 +86,11 @@ def sha256(path: Path) -> str:
 
 
 def iso(moment: dt.datetime) -> str:
-    return moment.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return moment.astimezone(dt.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def parse_time(text: str) -> dt.datetime:
-    return dt.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
+    return dt.datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.UTC)
 
 
 def version_key(version: str) -> tuple[int, int, int]:
@@ -119,10 +119,20 @@ class History:
         return cls(component, {entry["version"]: entry for entry in data["versions"]})
 
     def dump(self, now: dt.datetime) -> dict:
-        ordered = sorted(self.versions.values(), key=lambda e: version_key(e["version"]), reverse=True)
-        return {"component": self.component, "updated_at": iso(now), "versions": ordered}
+        ordered = sorted(
+            self.versions.values(),
+            key=lambda e: version_key(e["version"]),
+            reverse=True,
+        )
+        return {
+            "component": self.component,
+            "updated_at": iso(now),
+            "versions": ordered,
+        }
 
-    def add(self, version: str, tag: str, rpms: dict[str, dict], now: dt.datetime) -> dict:
+    def add(
+        self, version: str, tag: str, rpms: dict[str, dict], now: dt.datetime
+    ) -> dict:
         entry = {
             "version": version,
             "tag": tag,
@@ -172,7 +182,9 @@ def promote(history: History, version: str, now: dt.datetime) -> None:
         raise Refused(f"{history.component} {version} is already in stable")
     floor = history.newest_stable()
     if floor is not None and version_key(version) < version_key(floor):
-        raise Refused(f"stable already has {history.component} {floor}, newer than {version}")
+        raise Refused(
+            f"stable already has {history.component} {floor}, newer than {version}"
+        )
     entry["stable_at"] = iso(now)
 
 
@@ -258,7 +270,15 @@ class R2Store(Store):
 
     def _s3api(self, *args: str, check: bool = True) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["aws", "s3api", "--endpoint-url", self.endpoint, "--region", "auto", *args],
+            [
+                "aws",
+                "s3api",
+                "--endpoint-url",
+                self.endpoint,
+                "--region",
+                "auto",
+                *args,
+            ],
             check=check,
             text=True,
             capture_output=True,
@@ -271,7 +291,9 @@ class R2Store(Store):
         )
 
     def tag(self, key: str) -> str | None:
-        result = self._s3api("head-object", "--bucket", self.bucket, "--key", key, check=False)
+        result = self._s3api(
+            "head-object", "--bucket", self.bucket, "--key", key, check=False
+        )
         if result.returncode != 0:
             if "Not Found" in result.stderr or "404" in result.stderr:
                 return None
@@ -288,8 +310,17 @@ class R2Store(Store):
 
     def put(self, key: str, src: Path, cache_control: str) -> None:
         self._s3api(
-            "put-object", "--bucket", self.bucket, "--key", key, "--body", str(src),
-            "--content-type", content_type(src), "--cache-control", cache_control,
+            "put-object",
+            "--bucket",
+            self.bucket,
+            "--key",
+            key,
+            "--body",
+            str(src),
+            "--content-type",
+            content_type(src),
+            "--cache-control",
+            cache_control,
         )
         log(f"  put {key}")
 
@@ -315,28 +346,52 @@ class GitHubSource:
 
     def tags(self, component: Component) -> list[str]:
         """Published releases that carry rpms, in one paginated call."""
-        pages = json.loads(output(
-            "gh", "api", "--paginate", "--slurp", f"repos/{component.repository}/releases?per_page=100",
-        ))
+        pages = json.loads(
+            output(
+                "gh",
+                "api",
+                "--paginate",
+                "--slurp",
+                f"repos/{component.repository}/releases?per_page=100",
+            )
+        )
         return [
             release["tag_name"]
             for page in pages
             for release in page
-            if not release["draft"] and any(a["name"].endswith(".rpm") for a in release["assets"])
+            if not release["draft"]
+            and any(a["name"].endswith(".rpm") for a in release["assets"])
         ]
 
     def fetch(self, component: Component, tag: str, dest: Path) -> list[Path]:
         dest.mkdir(parents=True, exist_ok=True)
-        run("gh", "release", "download", tag, "--repo", component.repository,
-            "--pattern", "*.rpm", "--dir", str(dest), "--clobber")
+        run(
+            "gh",
+            "release",
+            "download",
+            tag,
+            "--repo",
+            component.repository,
+            "--pattern",
+            "*.rpm",
+            "--dir",
+            str(dest),
+            "--clobber",
+        )
         rpms = sorted(dest.glob("*.rpm"))
         for rpm in rpms:
             # A failure raises: an rpm that doesn't verify stops the run.
             run(
-                "gh", "attestation", "verify", str(rpm),
-                "--repo", component.repository,
-                "--signer-workflow", f"{component.repository}/{component.workflow}",
-                "--source-ref", f"refs/tags/{tag}",
+                "gh",
+                "attestation",
+                "verify",
+                str(rpm),
+                "--repo",
+                component.repository,
+                "--signer-workflow",
+                f"{component.repository}/{component.workflow}",
+                "--source-ref",
+                f"refs/tags/{tag}",
                 "--deny-self-hosted-runners",
                 stdout=subprocess.DEVNULL,
             )
@@ -375,9 +430,13 @@ class Signer:
     def __init__(self, fingerprint: str, public_key: Path, work: Path):
         if not re.fullmatch(r"[0-9A-F]{40}", fingerprint):
             raise Refused("SIGNING_KEY_FINGERPRINT is not a 40-digit fingerprint")
-        listed = output("gpg", "--batch", "--with-colons", "--list-secret-keys", fingerprint)
+        listed = output(
+            "gpg", "--batch", "--with-colons", "--list-secret-keys", fingerprint
+        )
         if f"fpr:::::::::{fingerprint}:" not in listed:
-            raise Refused("the imported secret key is not the one SIGNING_KEY_FINGERPRINT names")
+            raise Refused(
+                "the imported secret key is not the one SIGNING_KEY_FINGERPRINT names"
+            )
         self.fingerprint = fingerprint
         # An rpm database holding this key and no other: a package passes
         # --checksig against it only if this key signed it.
@@ -386,30 +445,55 @@ class Signer:
         run("rpmkeys", "--dbpath", str(self.rpmdb), "--import", str(public_key))
 
     def sign_rpm(self, rpm: Path) -> None:
-        run("rpmsign", "--define", f"_openpgp_sign_id {self.fingerprint}",
-            "--define", f"_gpg_name {self.fingerprint}", "--addsign", str(rpm),
-            stdout=subprocess.DEVNULL)
+        run(
+            "rpmsign",
+            "--define",
+            f"_openpgp_sign_id {self.fingerprint}",
+            "--define",
+            f"_gpg_name {self.fingerprint}",
+            "--addsign",
+            str(rpm),
+            stdout=subprocess.DEVNULL,
+        )
         self.check_rpm(rpm)
 
     def check_rpm(self, rpm: Path) -> None:
         result = subprocess.run(
             ["rpmkeys", "--dbpath", str(self.rpmdb), "--checksig", str(rpm)],
-            text=True, capture_output=True,
+            check=False,
+            text=True,
+            capture_output=True,
         )
         if result.returncode != 0 or "signatures OK" not in result.stdout:
-            raise Refused(f"{rpm.name} is not signed by the Steading key: {result.stdout.strip()}")
+            raise Refused(
+                f"{rpm.name} is not signed by the Steading key: {result.stdout.strip()}"
+            )
 
     def sign_file(self, path: Path) -> Path:
         signature = path.with_name(path.name + ".asc")
-        run("gpg", "--batch", "--yes", "--local-user", self.fingerprint,
-            "--detach-sign", "--armor", "--output", str(signature), str(path))
+        run(
+            "gpg",
+            "--batch",
+            "--yes",
+            "--local-user",
+            self.fingerprint,
+            "--detach-sign",
+            "--armor",
+            "--output",
+            str(signature),
+            str(path),
+        )
         return signature
 
 
 def rpm_identity(rpm: Path) -> dict[str, str]:
     fields = output(
-        "rpm", "-qp", "--nosignature", "--qf",
-        "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{SHA256HEADER}", str(rpm),
+        "rpm",
+        "-qp",
+        "--nosignature",
+        "--qf",
+        "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{SHA256HEADER}",
+        str(rpm),
     ).split("\t")
     return dict(zip(("name", "version", "release", "arch", "header"), fields))
 
@@ -443,7 +527,9 @@ def ingest(ctx: Context, component: Component, history: History, tag: str) -> bo
         log(f"{component.name} {tag}: not a plain vX.Y.Z tag, skipped")
         return False
 
-    fetched = ctx.source.fetch(component, tag, ctx.work / "releases" / component.name / tag)
+    fetched = ctx.source.fetch(
+        component, tag, ctx.work / "releases" / component.name / tag
+    )
     if not fetched:
         log(f"{component.name} {tag}: the release carries no rpms, skipped")
         return False
@@ -452,13 +538,19 @@ def ingest(ctx: Context, component: Component, history: History, tag: str) -> bo
     for rpm in fetched:
         ident = rpm_identity(rpm)
         if ident["name"] != component.name or ident["version"] != version:
-            raise Refused(f"{rpm.name} is {ident['name']} {ident['version']}, not {component.name} {version}")
+            raise Refused(
+                f"{rpm.name} is {ident['name']} {ident['version']}, not {component.name} {version}"
+            )
         if ident["arch"] not in ARCHES or ident["arch"] in by_arch:
-            raise Refused(f"{component.name} {tag}: unexpected or duplicate {ident['arch']} rpm {rpm.name}")
+            raise Refused(
+                f"{component.name} {tag}: unexpected or duplicate {ident['arch']} rpm {rpm.name}"
+            )
         by_arch[ident["arch"]] = rpm
     missing = set(ARCHES) - set(by_arch)
     if missing:
-        raise Refused(f"{component.name} {tag}: no rpm for {', '.join(sorted(missing))}")
+        raise Refused(
+            f"{component.name} {tag}: no rpm for {', '.join(sorted(missing))}"
+        )
 
     rpms = {}
     for arch, rpm in sorted(by_arch.items()):
@@ -499,12 +591,25 @@ def ingest_release_package(ctx: Context, history: History) -> bool:
     topdir = ctx.work / "rpmbuild"
     sources = topdir / "SOURCES"
     sources.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(ROOT / "site" / "RPM-GPG-KEY-steading", sources / "RPM-GPG-KEY-steading")
+    shutil.copyfile(
+        ROOT / "site" / "RPM-GPG-KEY-steading", sources / "RPM-GPG-KEY-steading"
+    )
     shutil.copyfile(ROOT / "release" / "steading.repo", sources / "steading.repo")
-    run("rpmbuild", "-bb", "--quiet", "--define", f"_topdir {topdir}", str(spec),
-        stdout=subprocess.DEVNULL)
-    (rpm,) = (topdir / "RPMS" / "noarch").glob(f"{RELEASE_PACKAGE}-{version}-*.noarch.rpm")
-    entry = history.add(version, f"v{version}", {"noarch": pool(ctx, RELEASE_PACKAGE, rpm)}, ctx.now)
+    run(
+        "rpmbuild",
+        "-bb",
+        "--quiet",
+        "--define",
+        f"_topdir {topdir}",
+        str(spec),
+        stdout=subprocess.DEVNULL,
+    )
+    (rpm,) = (topdir / "RPMS" / "noarch").glob(
+        f"{RELEASE_PACKAGE}-{version}-*.noarch.rpm"
+    )
+    entry = history.add(
+        version, f"v{version}", {"noarch": pool(ctx, RELEASE_PACKAGE, rpm)}, ctx.now
+    )
     # The repository's own configuration needs no soak.
     entry["stable_at"] = entry["edge_at"]
     log(f"{RELEASE_PACKAGE} {version}: added to edge and stable")
@@ -519,28 +624,43 @@ def repomd_files(repomd: Path) -> list[str]:
 
 def fetch_repo(ctx: Context, prefix: str, dest: Path) -> bool:
     """Download a channel's current metadata, or report it absent."""
-    if not ctx.store.get(f"{prefix}/repodata/repomd.xml", dest / "repodata" / "repomd.xml"):
+    if not ctx.store.get(
+        f"{prefix}/repodata/repomd.xml", dest / "repodata" / "repomd.xml"
+    ):
         return False
     for href in repomd_files(dest / "repodata" / "repomd.xml"):
         if not ctx.store.get(f"{prefix}/{href}", dest / href):
-            raise Refused(f"{prefix}/repodata/repomd.xml names {href}, which is missing")
+            raise Refused(
+                f"{prefix}/repodata/repomd.xml names {href}, which is missing"
+            )
     return True
 
 
 def primary_packages(repo: Path) -> dict[str, tuple[str, int]]:
     ns = {"c": "http://linux.duke.edu/metadata/common"}
-    (primary,) = [h for h in repomd_files(repo / "repodata" / "repomd.xml") if "primary.xml" in h]
+    (primary,) = [
+        h for h in repomd_files(repo / "repodata" / "repomd.xml") if "primary.xml" in h
+    ]
     with gzip.open(repo / primary) as f:
         root = ET.parse(f).getroot()
     packages = {}
     for package in root.findall("c:package", ns):
         href = package.find("c:location", ns).get("href")
-        packages[href] = (package.find("c:checksum", ns).text, int(package.find("c:size", ns).get("package")))
+        packages[href] = (
+            package.find("c:checksum", ns).text,
+            int(package.find("c:size", ns).get("package")),
+        )
     return packages
 
 
-def build_repo(ctx: Context, channel: str, arch: str, entries: list[dict],
-               caches: list[Path], full: bool) -> Path:
+def build_repo(
+    ctx: Context,
+    channel: str,
+    arch: str,
+    entries: list[dict],
+    caches: list[Path],
+    full: bool,
+) -> Path:
     """Write one channel's metadata for one architecture, and sign it.
 
     Each pooled rpm's metadata is taken from earlier metadata in `caches`
@@ -567,8 +687,16 @@ def build_repo(ctx: Context, channel: str, arch: str, entries: list[dict],
             staged.touch()
         expected[POOL_FROM_REPO + path] = (entry["sha256"], entry["size"])
 
-    args = ["createrepo_c", "--quiet", "--location-prefix", POOL_FROM_REPO,
-            "--general-compress-type", "gz", "--outputdir", str(out)]
+    args = [
+        "createrepo_c",
+        "--quiet",
+        "--location-prefix",
+        POOL_FROM_REPO,
+        "--general-compress-type",
+        "gz",
+        "--outputdir",
+        str(out),
+    ]
     usable = [c for c in caches if (c / "repodata" / "repomd.xml").is_file()]
     if usable and not full:
         args += ["--update", "--skip-stat"]
@@ -582,7 +710,9 @@ def build_repo(ctx: Context, channel: str, arch: str, entries: list[dict],
     found = primary_packages(out)
     if found != expected:
         wrong = sorted(set(found.items()) ^ set(expected.items()))
-        raise Refused(f"{channel}/{arch} metadata disagrees with the history (run sync --full): {wrong}")
+        raise Refused(
+            f"{channel}/{arch} metadata disagrees with the history (run sync --full): {wrong}"
+        )
 
     ctx.need_signer().sign_file(out / "repodata" / "repomd.xml")
     return out
@@ -615,8 +745,16 @@ def publish_repos(ctx: Context, histories: dict[str, History], full: bool) -> No
                 ctx.store.put_if_changed(f"{prefix}/{href}", out / href, IMMUTABLE)
         for channel, out in built.items():
             prefix = f"fedora/{channel}/{arch}"
-            ctx.store.put(f"{prefix}/repodata/repomd.xml", out / "repodata" / "repomd.xml", MUTABLE)
-            ctx.store.put(f"{prefix}/repodata/repomd.xml.asc", out / "repodata" / "repomd.xml.asc", MUTABLE)
+            ctx.store.put(
+                f"{prefix}/repodata/repomd.xml",
+                out / "repodata" / "repomd.xml",
+                MUTABLE,
+            )
+            ctx.store.put(
+                f"{prefix}/repodata/repomd.xml.asc",
+                out / "repodata" / "repomd.xml.asc",
+                MUTABLE,
+            )
             log(f"{channel}/{arch}: published")
 
 
@@ -625,7 +763,7 @@ def publish_site(ctx: Context, histories: dict[str, History]) -> None:
     shutil.rmtree(site, ignore_errors=True)
     shutil.copytree(ROOT / "site", site)
     fingerprint = ctx.need_signer().fingerprint
-    grouped = " ".join(fingerprint[i:i + 4] for i in range(0, 40, 4))
+    grouped = " ".join(fingerprint[i : i + 4] for i in range(0, 40, 4))
     index = site / "index.html"
     index.write_text(index.read_text().replace("@FINGERPRINT@", grouped))
     for path in sorted(p for p in site.rglob("*") if p.is_file()):
@@ -649,7 +787,9 @@ def load_histories(ctx: Context) -> tuple[dict[str, History], dict[str, str | No
     return histories, tags
 
 
-def save_histories(ctx: Context, histories: dict[str, History], tags: dict[str, str | None]) -> None:
+def save_histories(
+    ctx: Context, histories: dict[str, History], tags: dict[str, str | None]
+) -> None:
     for name, history in histories.items():
         key = f"channels/{name}.json"
         # Another run changed the history since this one read it: stop
@@ -678,7 +818,9 @@ def sync(ctx: Context, rebuild: bool, full: bool, change=None) -> None:
         promoted = choose_promotion(history, ctx.now)
         if promoted:
             promote(history, promoted, ctx.now)
-            log(f"{component.name} {promoted}: promoted to stable after soaking in edge")
+            log(
+                f"{component.name} {promoted}: promoted to stable after soaking in edge"
+            )
             changed = True
 
     if not ctx.store.tag("fedora/stable/x86_64/repodata/repomd.xml"):
@@ -700,7 +842,9 @@ def image_tags(history: History) -> dict[str, str]:
     `stable` and `latest` name the newest stable build, and each `X.Y` the
     newest stable build in that series. Yanked builds are never named.
     """
-    stable = sorted((e["version"] for e in history.in_channel("stable")), key=version_key)
+    stable = sorted(
+        (e["version"] for e in history.in_channel("stable")), key=version_key
+    )
     tags: dict[str, str] = {}
     for version in stable:
         major, minor, _ = version_key(version)
@@ -712,7 +856,9 @@ def image_tags(history: History) -> dict[str, str]:
 
 def manifest_digest(reference: str) -> str | None:
     """The digest of what a tag names: the index itself, not one platform's image."""
-    result = subprocess.run(["skopeo", "inspect", "--raw", reference], capture_output=True)
+    result = subprocess.run(
+        ["skopeo", "inspect", "--raw", reference], check=False, capture_output=True
+    )
     if result.returncode != 0:
         return None
     return "sha256:" + hashlib.sha256(result.stdout).hexdigest()
@@ -722,8 +868,10 @@ def reconcile_images(components: list[Component], base_url: str, dry_run: bool) 
     for component in components:
         if not component.image:
             continue
-        request = urllib.request.Request(f"{base_url}/channels/{component.name}.json",
-                                         headers={"User-Agent": "steading-ai/pkgs.stead.ing"})
+        request = urllib.request.Request(
+            f"{base_url}/channels/{component.name}.json",
+            headers={"User-Agent": "steading-ai/pkgs.stead.ing"},
+        )
         with urllib.request.urlopen(request) as response:
             history = History.load(component.name, json.load(response))
         for tag, version in sorted(image_tags(history).items()):
@@ -744,15 +892,27 @@ def reconcile_images(components: list[Component], base_url: str, dry_run: bool) 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--store", default="r2", help="'r2', or a directory standing in for the bucket")
-    parser.add_argument("--source", default="github", help="'github', or a directory of test releases")
+    parser.add_argument(
+        "--store", default="r2", help="'r2', or a directory standing in for the bucket"
+    )
+    parser.add_argument(
+        "--source", default="github", help="'github', or a directory of test releases"
+    )
     parser.add_argument("--components", type=Path, default=ROOT / "components.toml")
-    parser.add_argument("--work", type=Path, help="scratch directory (default: a temporary one)")
-    parser.add_argument("--now", help="the time to act at, YYYY-MM-DDTHH:MM:SSZ (tests only)")
+    parser.add_argument(
+        "--work", type=Path, help="scratch directory (default: a temporary one)"
+    )
+    parser.add_argument(
+        "--now", help="the time to act at, YYYY-MM-DDTHH:MM:SSZ (tests only)"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
-    sync_cmd = commands.add_parser("sync", help="publish new releases and promote soaked builds")
+    sync_cmd = commands.add_parser(
+        "sync", help="publish new releases and promote soaked builds"
+    )
     sync_cmd.add_argument("--rebuild", action="store_true", help="rebuild all metadata")
-    sync_cmd.add_argument("--full", action="store_true", help="rebuild it from the rpms themselves")
+    sync_cmd.add_argument(
+        "--full", action="store_true", help="rebuild it from the rpms themselves"
+    )
     promote_cmd = commands.add_parser("promote", help="move a build to stable now")
     promote_cmd.add_argument("component")
     promote_cmd.add_argument("version")
@@ -783,35 +943,56 @@ def main(argv: list[str] | None = None) -> int:
             source = DirectorySource(Path(args.source))
         if args.now and not isinstance(store, LocalStore):
             raise Refused("--now is for tests, and never publishes to the bucket")
-        now = parse_time(args.now) if args.now else dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+        now = (
+            parse_time(args.now)
+            if args.now
+            else dt.datetime.now(dt.UTC).replace(microsecond=0)
+        )
 
         with tempfile.TemporaryDirectory() as scratch:
             work = args.work or Path(scratch)
             work.mkdir(parents=True, exist_ok=True)
-            signer = Signer(os.environ.get("SIGNING_KEY_FINGERPRINT", ""),
-                            ROOT / "site" / "RPM-GPG-KEY-steading", work)
+            signer = Signer(
+                os.environ.get("SIGNING_KEY_FINGERPRINT", ""),
+                ROOT / "site" / "RPM-GPG-KEY-steading",
+                work,
+            )
             ctx = Context(store, source, components, work, now, signer)
             names = {c.name for c in components}
 
             def require(component: str) -> None:
                 if component not in names:
-                    raise Refused(f"no component named {component!r} in {args.components.name}")
+                    raise Refused(
+                        f"no component named {component!r} in {args.components.name}"
+                    )
 
             if args.command == "sync":
                 sync(ctx, args.rebuild, args.full)
             elif args.command == "promote":
                 require(args.component)
-                sync(ctx, False, False, lambda h: promote(h[args.component], args.version, now))
+                sync(
+                    ctx,
+                    False,
+                    False,
+                    lambda h: promote(h[args.component], args.version, now),
+                )
                 log(f"{args.component} {args.version}: promoted to stable by hand")
             elif args.command == "yank":
                 require(args.component)
-                sync(ctx, False, False, lambda h: yank(h[args.component], args.version, args.reason, now))
+                sync(
+                    ctx,
+                    False,
+                    False,
+                    lambda h: yank(h[args.component], args.version, args.reason, now),
+                )
                 log(f"{args.component} {args.version}: yanked")
     except Refused as refusal:
         log(f"pkgs: {refusal}")
         return 1
     except subprocess.CalledProcessError as failure:
-        log(f"pkgs: {' '.join(map(str, failure.cmd[:3]))} ... exited {failure.returncode}")
+        log(
+            f"pkgs: {' '.join(map(str, failure.cmd[:3]))} ... exited {failure.returncode}"
+        )
         return 1
     return 0
 

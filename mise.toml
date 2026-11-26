@@ -1,5 +1,9 @@
-# The tools the checks run, for running them locally.
+# The tools the checks run, locally through hk and in CI through
+# jdx/mise-action, at the same versions. Renovate keeps them current, with
+# their lockfile mise.lock.
 [tools]
-"aqua:koalaman/shellcheck" = "0.11.0"
+hk = "2.13.0"
+jactionlint = "2.6.0"
+ruff = "0.17.6"
+shellcheck = "0.11.0"
 shfmt = "3.12.0"
-actionlint = "1.7.12"

@@ -1,0 +1,42 @@
+// Renovate keeps every dependency this repository pins current: the tools in
+// mise.toml with their lockfile mise.lock, the GitHub Actions in
+// .github/workflows with their lockfile actions.lock, the Fedora image the
+// publishing job and the end to end test run in, and the hk release hk.pkl
+// names. The preset holds a release for three days and then merges its update
+// once the pull request's checks pass.
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "github>ivy/renovate-config",
+    // An image reference carries its digest, here and wherever one is added.
+    // https://docs.renovatebot.com/presets-docker/#dockerpindigests
+    "docker:pinDigests",
+  ],
+
+  // https://docs.renovatebot.com/modules/manager/regex/
+  customManagers: [
+    {
+      description: "The hk release hk.pkl takes its schema from, which is the one mise.toml installs",
+      customType: "regex",
+      managerFilePatterns: ["/^hk\\.pkl$/"],
+      matchStrings: [
+        "package://github\\.com/jdx/hk/releases/download/v(?<currentValue>[^/]+)/",
+        "/hk@(?<currentValue>[^#]+)#/",
+      ],
+      depNameTemplate: "hk",
+      packageNameTemplate: "jdx/hk",
+      datasourceTemplate: "github-releases",
+      extractVersionTemplate: "^v(?<version>.+)$",
+    },
+  ],
+
+  packageRules: [
+    {
+      description: "mise.toml writes a version without the v its GitHub tag carries",
+      matchManagers: ["mise"],
+      matchDatasources: ["github-releases", "github-tags"],
+      // https://docs.renovatebot.com/configuration-options/#extractversion
+      extractVersion: "^v?(?<version>.+)$",
+    },
+  ],
+}
