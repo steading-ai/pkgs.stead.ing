@@ -49,7 +49,7 @@ jobs:
   # The only job that may reference the publish environment, which holds
   # the signing key and the bucket's token and deploys only from main.
   publish:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     container: docker.io/library/fedora:45@sha256:a7d72ba2745b100a3351087472e5ee7b2450af7cf331e7673007e3817612839c
     timeout-minutes: 30
     environment: publish
@@ -107,7 +107,7 @@ jobs:
   # holds, read from the published histories. No key, no bucket token.
   images:
     needs: publish
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
